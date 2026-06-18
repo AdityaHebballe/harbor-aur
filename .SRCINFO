@@ -1,12 +1,11 @@
 pkgbase = harbor-stremio-git
 	pkgdesc = A Stremio client built for adventure
-	pkgver = 0.9.4.r0.g0000000
+	pkgver = 0.9.10.r56.gaf0608e
 	pkgrel = 1
 	url = https://github.com/harborstremio/harbor
 	arch = x86_64
 	license = MIT
 	makedepends = cargo
-	makedepends = dpkg
 	makedepends = git
 	makedepends = libarchive
 	makedepends = nodejs
@@ -26,7 +25,12 @@ pkgbase = harbor-stremio-git
 	provides = harbor
 	conflicts = harbor-stremio
 	conflicts = harbor
+	options = !lto
 	source = harbor::git+https://github.com/harborstremio/harbor.git
+	source = fix-gtk-raw-pointer-inference.patch
+	source = fix-linux-mpv-render-runtime.patch
 	sha256sums = SKIP
+	sha256sums = e3436c7bab81dbe80d7e747b4034ac8ddf3f617300d04684b41ce132f16c9092
+	sha256sums = dece91982901fa05138111e79d215ac44ba9d49096dbdd3b3e89079c065405b8
 
 pkgname = harbor-stremio-git

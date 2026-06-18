@@ -1,0 +1,164 @@
+diff --git a/src-tauri/src/mpv_render_linux.rs b/src-tauri/src/mpv_render_linux.rs
+index 42f67e2..e4b26e0 100644
+--- a/src-tauri/src/mpv_render_linux.rs
++++ b/src-tauri/src/mpv_render_linux.rs
+@@ -42,6 +42,9 @@ struct Pending {
+ 
+ struct Embed {
+     area: gtk::GLArea,
++    overlay: gtk::Overlay,
++    gtk_window: gtk::ApplicationWindow,
++    vbox: gtk::Box,
+     web_view: gtk::Widget,
+ }
+ 
+@@ -63,7 +66,17 @@ fn pending_slot() -> &'static Mutex<Option<Pending>> {
+     PENDING.get_or_init(|| Mutex::new(None))
+ }
+ 
++type GlProcLoader = unsafe extern "C" fn(*const c_char) -> *mut c_void;
++
++fn symbol_as_loader(name: &[u8]) -> Option<GlProcLoader> {
++    let sym = unsafe { dlsym(RTLD_DEFAULT, name.as_ptr() as *const c_char) };
++    (!sym.is_null()).then(|| unsafe { std::mem::transmute(sym) })
++}
++
+ fn proc_loader() -> Option<unsafe extern "C" fn(*const c_char) -> *mut c_void> {
++    if let Some(epoxy) = symbol_as_loader(b"epoxy_get_proc_address\0") {
++        return Some(epoxy);
++    }
+     let primary = if PROC_WAYLAND.load(Ordering::Relaxed) {
+         b"eglGetProcAddress\0".as_ptr()
+     } else {
+@@ -185,8 +198,7 @@ pub fn install(gtk_window: &gtk::ApplicationWindow, vbox: &gtk::Box) -> Result<(
+     {
+         let mut existing = embed_slot().lock().map_err(|e| format!("embed lock: {}", e))?;
+         if let Some(stale) = existing.take() {
+-            stale.area.unparent();
+-            std::mem::forget(stale);
++            restore_webview(stale);
+         }
+     }
+     let pending = pending_slot()
+@@ -211,12 +223,13 @@ pub fn install(gtk_window: &gtk::ApplicationWindow, vbox: &gtk::Box) -> Result<(
+     area.set_app_paintable(true);
+     area.set_size_request(16, 16);
+ 
++    gtk_window.remove(vbox);
+     vbox.remove(&web_view);
+     fixed.put(&area, 0, 0);
+     overlay.add(&fixed);
+     overlay.add_overlay(&web_view);
+     overlay.set_overlay_pass_through(&web_view, false);
+-    vbox.pack_start(&overlay, true, true, 0);
++    gtk_window.add(&overlay);
+ 
+     set_webview_transparent(&web_view);
+     overlay.show_all();
+@@ -249,6 +262,9 @@ pub fn install(gtk_window: &gtk::ApplicationWindow, vbox: &gtk::Box) -> Result<(
+ 
+     *embed_slot().lock().map_err(|e| format!("embed lock: {}", e))? = Some(Embed {
+         area: area.clone(),
++        overlay,
++        gtk_window: gtk_window.clone(),
++        vbox: vbox.clone(),
+         web_view,
+     });
+ 
+@@ -287,6 +303,7 @@ fn do_render(rc: &RenderContext, area: &gtk::GLArea) {
+     if LAST_SURFACE.swap(packed, Ordering::Relaxed) != packed {
+         eprintln!("[harbor::mpv_linux] render surface {}x{} px scale {}", w, h, scale);
+     }
++    area.attach_buffers();
+     let fbo = current_fbo();
+     if fbo == 0 && !FBO_ZERO_WARNED.swap(true, Ordering::Relaxed) {
+         eprintln!("[harbor::mpv_linux] WARNING: GtkGLArea FBO query returned 0; mpv will render to the default framebuffer and the video region will stay BLACK. glGetIntegerv or the GL proc loader likely failed to resolve.");
+@@ -300,19 +317,28 @@ pub fn resize_to(x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
+-pub fn resize_to(x: f64, y: f64, w: f64, h: f64) -> Result<(), String> {
++pub fn resize_to(
++    x: f64,
++    y: f64,
++    w: f64,
++    h: f64,
++    css_view_w: f64,
++    css_view_h: f64,
++) -> Result<(), String> {
+     let guard = embed_slot().lock().map_err(|e| format!("embed lock: {}", e))?;
+     let Some(embed) = guard.as_ref() else {
+         return Ok(());
+     };
+-    let scale = embed.area.scale_factor().max(1) as f64;
+-    let lw = (w / scale).round().max(1.0) as i32;
+-    let lh = (h / scale).round().max(1.0) as i32;
++    let widget_scale = embed.area.scale_factor().max(1) as f64;
++    let sx = if css_view_w > 0.0 { embed.gtk_window.allocated_width().max(1) as f64 / css_view_w } else { 1.0 };
++    let sy = if css_view_h > 0.0 { embed.gtk_window.allocated_height().max(1) as f64 / css_view_h } else { 1.0 };
++    let lw = (w * sx / widget_scale).round().max(1.0) as i32;
++    let lh = (h * sy / widget_scale).round().max(1.0) as i32;
+     embed.area.set_size_request(lw, lh);
+     if let Some(parent) = embed.area.parent() {
+         if let Some(fixed) = parent.downcast_ref::<gtk::Fixed>() {
+-            let lx = (x / scale).round() as i32;
+-            let ly = (y / scale).round() as i32;
++            let lx = (x * sx / widget_scale).round() as i32;
++            let ly = (y * sy / widget_scale).round() as i32;
+             fixed.move_(&embed.area, lx, ly);
+         }
+     }
+     embed.area.queue_render();
+     Ok(())
+ }
+@@ -321,12 +347,35 @@ pub fn uninstall() -> Result<(), String> {
+     let Some(embed) = guard.take() else {
+         return Ok(());
+     };
+-    set_webview_opaque(&embed.web_view);
+-    embed.area.unparent();
++    restore_webview(embed);
+     eprintln!("[harbor::mpv_linux] uninstalled");
+     Ok(())
+ }
+ 
++fn restore_webview(embed: Embed) {
++    set_webview_opaque(&embed.web_view);
++    if let Some(parent) = embed.web_view.parent() {
++        if let Some(container) = parent.downcast_ref::<gtk::Container>() {
++            container.remove(&embed.web_view);
++        }
++    }
++    if embed.overlay.parent().is_some() {
++        if let Some(parent) = embed.overlay.parent() {
++            if let Some(container) = parent.downcast_ref::<gtk::Container>() {
++                container.remove(&embed.overlay);
++            }
++        }
++    }
++    if embed.web_view.parent().is_none() {
++        embed.vbox.pack_start(&embed.web_view, true, true, 0);
++        embed.web_view.show();
++    }
++    if embed.vbox.parent().is_none() {
++        embed.gtk_window.add(&embed.vbox);
++    }
++    embed.vbox.show_all();
++}
++
+ fn schedule_redraw() {
+     if REDRAW_PENDING.swap(true, Ordering::AcqRel) {
+         return;
+diff --git a/src-tauri/src/mpv.rs b/src-tauri/src/mpv.rs
+--- a/src-tauri/src/mpv.rs
++++ b/src-tauri/src/mpv.rs
+@@ -677,8 +677,10 @@ pub async fn mpv_set_geometry(
+             let y = geom.css_top;
+             let w = geom.css_width;
+             let h = geom.css_height;
++            let css_view_w = geom.css_view_w;
++            let css_view_h = geom.css_view_h;
+             let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
+             let _ = app.run_on_main_thread(move || {
+-                let _ = crate::mpv_render_linux::resize_to(x, y, w, h);
++                let _ = crate::mpv_render_linux::resize_to(x, y, w, h, css_view_w, css_view_h);
+                 let _ = tx.send(());
+             });
+             let _ = rx.recv_timeout(std::time::Duration::from_millis(300));
