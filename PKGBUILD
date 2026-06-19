@@ -2,7 +2,7 @@
 
 pkgname=harbor-stremio-git
 _pkgname=harbor
-pkgver=0.9.11.r61.gfb6118e
+pkgver=0.9.12.r67.g7eaf9d4
 pkgrel=1
 pkgdesc='A Stremio client built for adventure'
 arch=('x86_64')
@@ -35,16 +35,8 @@ makedepends=(
 provides=('harbor-stremio' 'harbor')
 conflicts=('harbor-stremio' 'harbor')
 
-source=(
-  "$_pkgname::git+https://github.com/harborstremio/harbor.git"
-  'fix-gtk-raw-pointer-inference.patch'
-  'fix-linux-mpv-render-runtime.patch'
-)
-sha256sums=(
-  'SKIP'
-  'e3436c7bab81dbe80d7e747b4034ac8ddf3f617300d04684b41ce132f16c9092'
-  'dece91982901fa05138111e79d215ac44ba9d49096dbdd3b3e89079c065405b8'
-)
+source=("$_pkgname::git+https://github.com/harborstremio/harbor.git")
+sha256sums=('SKIP')
 
 pkgver() {
   cd "$srcdir/$_pkgname"
@@ -59,9 +51,6 @@ pkgver() {
 
 prepare() {
   cd "$srcdir/$_pkgname"
-
-  patch -Np1 -i "$srcdir/fix-gtk-raw-pointer-inference.patch"
-  patch -Np1 -i "$srcdir/fix-linux-mpv-render-runtime.patch"
 
   node <<'EOF'
 const fs = require('fs');
