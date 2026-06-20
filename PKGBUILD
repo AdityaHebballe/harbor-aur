@@ -2,7 +2,7 @@
 
 pkgname=harbor-stremio-git
 _pkgname=harbor
-pkgver=0.9.12.r67.g7eaf9d4
+pkgver=0.9.12.r74.g964aa51
 pkgrel=1
 pkgdesc='A Stremio client built for adventure'
 arch=('x86_64')
@@ -52,31 +52,13 @@ pkgver() {
 prepare() {
   cd "$srcdir/$_pkgname"
 
-  node <<'EOF'
-const fs = require('fs');
-const path = 'src-tauri/tauri.conf.json';
-const config = JSON.parse(fs.readFileSync(path, 'utf8'));
-config.bundle.createUpdaterArtifacts = false;
-fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
-EOF
-
-  mkdir -p src-tauri/binaries
-  ln -sf /usr/bin/ffmpeg src-tauri/binaries/ffmpeg-x86_64-unknown-linux-gnu
-  ln -sf /usr/bin/ffprobe src-tauri/binaries/ffprobe-x86_64-unknown-linux-gnu
-  ln -sf /usr/bin/yt-dlp src-tauri/binaries/yt-dlp-x86_64-unknown-linux-gnu
-
-  cat > pnpm-workspace.yaml <<'EOF'
-allowBuilds:
-  esbuild: true
-EOF
-
   pnpm install --frozen-lockfile
 }
 
 build() {
   cd "$srcdir/$_pkgname"
 
-  pnpm tauri build --bundles deb
+  pnpm run tauri:build:linux-system --bundles deb
 }
 
 package() {
@@ -85,7 +67,7 @@ package() {
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
   local deb data_archive
-  deb="$(find src-tauri/target/release/bundle/deb -type f -name '*.deb' | head -n 1)"
+  deb="$(find src-tauri/target -path '*/release/bundle/deb/*.deb' -type f | head -n 1)"
 
   if [[ -z "$deb" ]]; then
     echo "Debian bundle not found" >&2
@@ -103,10 +85,6 @@ package() {
   fi
 
   bsdtar -xf "$data_archive" -C "$pkgdir"
-
-  rm -f "$pkgdir/usr/bin/ffmpeg" \
-        "$pkgdir/usr/bin/ffprobe" \
-        "$pkgdir/usr/bin/yt-dlp"
 
   if [[ -x "$pkgdir/usr/bin/harbor" && ! -e "$pkgdir/usr/bin/harbor-stremio" ]]; then
     ln -s harbor "$pkgdir/usr/bin/harbor-stremio"
