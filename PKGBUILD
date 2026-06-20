@@ -52,6 +52,17 @@ pkgver() {
 prepare() {
   cd "$srcdir/$_pkgname"
 
+  cat > pnpm-workspace.yaml <<'EOF'
+packages:
+  - "."
+
+allowBuilds:
+  esbuild: true
+
+onlyBuiltDependencies:
+  - esbuild
+EOF
+
   pnpm install --frozen-lockfile
 }
 
